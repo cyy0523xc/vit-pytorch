@@ -94,6 +94,7 @@ class ViT(nn.Module):
 
         self.patch_size = patch_size
 
+        # nn.Parameter()来转换一个固定的权重数值，使的其可以跟着网络训练一直调优下去，学习到一个最适合的权重值
         self.pos_embedding = nn.Parameter(torch.randn(1, num_patches + 1, dim))
         self.patch_to_embedding = nn.Linear(patch_dim, dim)
         self.cls_token = nn.Parameter(torch.randn(1, 1, dim))
@@ -110,20 +111,38 @@ class ViT(nn.Module):
         )
 
     def forward(self, img, mask = None):
+        # 假设image_size=256, C=3, patch_size=32，即W=H=256, C=3, p=32
+        # 假设dim=1024
         p = self.patch_size
 
+        # 将一个图像分成一个个patch，并将每个patch转换成一个一维向量
+        # 将图像H*W*C扁平化为(h*w)*(p^2*C)，减少了一个维度
+        # H=h*p, W=w*p => h=w=8，图像就变成：64*3072
+        # 相当于一个3通道的彩色图像转变成了一个64通道的一维向量（姑且也可以理解为图像）
         x = rearrange(img, 'b c (h p1) (w p2) -> b (h w) (p1 p2 c)', p1 = p, p2 = p)
+        # 全连接层将图像64*3072变成指定长度的64*1024向量
         x = self.patch_to_embedding(x)
-        b, n, _ = x.shape
 
+        # token的形状和x是一样，所以才连接在一起
+        # 这个token的作用是随机初始化的， 随着训练的进行，token会训练到最优值，
+        # 但是前面已经有一个全连接层了，为什么还需要这个? 
+        # token带有全局信息？有点这个意思吧
+        # 这里n=h*w
+        b, n, _ = x.shape
         cls_tokens = repeat(self.cls_token, '() n d -> b n d', b = b)
         x = torch.cat((cls_tokens, x), dim=1)
+
+        # 加上位置特征
+        # 可视化这个初始化时也是随机的？有点迷惑，好像是这一堆凑在一起刚好还可以训练的意思
         x += self.pos_embedding[:, :(n + 1)]
         x = self.dropout(x)
 
+        # 
         x = self.transformer(x, mask)
 
+        # 
         x = x.mean(dim = 1) if self.pool == 'mean' else x[:, 0]
 
+        # 
         x = self.to_latent(x)
         return self.mlp_head(x)
